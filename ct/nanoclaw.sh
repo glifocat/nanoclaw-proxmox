@@ -119,6 +119,22 @@ function update_script() {
     # [BREAKING] entry still stops the update for /update-nanoclaw.
     cd /opt/nanoclaw || exit
     ensure_dependencies jq
+    # Cutover moves HEAD before it records its phase, so an interrupted update
+    # can look current to the ancestry check below. Any unfinished transaction
+    # for this checkout stops here; files are read one by one so a bad one
+    # cannot hide the rest.
+    NANOCLAW_PENDING=""
+    for NANOCLAW_STATE in /opt/.nanoclaw-updates/*/*/state.json; do
+      [[ -f "$NANOCLAW_STATE" ]] || continue
+      NANOCLAW_PENDING=$(jq -r 'select(.projectRoot == "/opt/nanoclaw" and (.phase | IN("complete", "rolled-back", "abandoned") | not)) | "\(.id) (\(.phase))"' "$NANOCLAW_STATE" 2>/dev/null || true)
+      if [[ -n "$NANOCLAW_PENDING" ]]; then
+        break
+      fi
+    done
+    if [[ -n "$NANOCLAW_PENDING" ]]; then
+      msg_error "NanoClaw update ${NANOCLAW_PENDING} did not finish. Finish, roll back or abandon it with /update-nanoclaw as the nanoclaw user in /opt/nanoclaw, then run update again."
+      exit
+    fi
     msg_info "Fetching NanoClaw main"
     $STD "${NANOCLAW_USER[@]}" git fetch -q upstream "+refs/heads/main:refs/remotes/upstream/main"
     NANOCLAW_TARGET=$("${NANOCLAW_USER[@]}" git rev-parse upstream/main)
