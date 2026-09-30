@@ -2,11 +2,17 @@
 # Published from the glifocat/nanoclaw-proxmox fork, not community-scripts.
 # Both roots are pinned so the script, its install step, the engine and the
 # container's later `update` all run the tested revision.
-COMMUNITY_SCRIPTS_URL="${COMMUNITY_SCRIPTS_URL:-https://raw.githubusercontent.com/glifocat/nanoclaw-proxmox/nanoclaw-helper-v2}"
+COMMUNITY_SCRIPTS_URL="${COMMUNITY_SCRIPTS_URL:-https://raw.githubusercontent.com/glifocat/nanoclaw-proxmox/nanoclaw-helper-v2.1}"
 COMMUNITY_SCRIPTS_CORE_URL="${COMMUNITY_SCRIPTS_CORE_URL:-https://raw.githubusercontent.com/community-scripts/core/6f9088594d1541019858da37b864e610c568daf2}"
 export COMMUNITY_SCRIPTS_URL COMMUNITY_SCRIPTS_CORE_URL
 _cs_boot="${COMMUNITY_SCRIPTS_CORE_DIR:-$(dirname "${BASH_SOURCE[0]}")/../../core}/core/build.func"
 source "$_cs_boot" 2>/dev/null || source <(curl -fsSL "${COMMUNITY_SCRIPTS_CORE_URL}/core/build.func")
+# Without the engine every call below fails and the script would still print
+# the install-complete lines, e.g. when run on a laptop instead of the host.
+if ! declare -F build_container >/dev/null; then
+  echo "The community-scripts engine did not load. Run this on the Proxmox VE host shell." >&2
+  exit 1
+fi
 # Copyright (c) 2021-2026 community-scripts ORG
 # Author: glifocat
 # License: MIT | https://github.com/community-scripts/ProxmoxVED/raw/main/LICENSE
