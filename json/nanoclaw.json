@@ -44,6 +44,10 @@
       "type": "warning"
     },
     {
+      "text": "Set var_nanoclaw_ref=main to install NanoClaw's main branch instead of the latest release. The update function then follows upstream main through the same staged updater.",
+      "type": "info"
+    },
+    {
       "text": "The nanoclaw account owns /opt/nanoclaw and belongs to the docker group, which is root-equivalent inside the LXC. It has no password; reach it with 'pct enter <CTID>' and 'machinectl shell nanoclaw@'.",
       "type": "warning"
     }

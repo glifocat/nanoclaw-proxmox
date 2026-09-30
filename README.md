@@ -5,10 +5,18 @@ This fork hosts the Proxmox VE helper for [NanoClaw](https://github.com/nanocoai
 Run on the Proxmox VE host shell:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/glifocat/nanoclaw-proxmox/nanoclaw-helper-v1/ct/nanoclaw.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/glifocat/nanoclaw-proxmox/nanoclaw-helper-v2/ct/nanoclaw.sh)"
 ```
 
-It creates an unprivileged Debian 13 LXC (2 cores, 8 GiB RAM, 40 GiB disk, nesting and keyctl on), installs Docker, Node.js 22 and the latest NanoClaw release in `/opt/nanoclaw`, and offers to start NanoClaw's setup wizard. To update NanoClaw later, run `update` inside the container. The helper is published from the `nanoclaw-helper-v1` tag, and the community-scripts engine it uses is pinned to a fixed commit.
+It creates an unprivileged Debian 13 LXC (2 cores, 8 GiB RAM, 40 GiB disk, nesting and keyctl on), installs Docker, Node.js 22 and the latest NanoClaw release in `/opt/nanoclaw`, and offers to start NanoClaw's setup wizard. To update NanoClaw later, run `update` inside the container. The helper is published from the `nanoclaw-helper-v2` tag, and the community-scripts engine it uses is pinned to a fixed commit.
+
+To install NanoClaw `main` instead of the latest release (for testing unreleased changes), set `var_nanoclaw_ref=main`:
+
+```bash
+var_nanoclaw_ref=main bash -c "$(curl -fsSL https://raw.githubusercontent.com/glifocat/nanoclaw-proxmox/nanoclaw-helper-v2/ct/nanoclaw.sh)"
+```
+
+The layout is the same (`/opt/nanoclaw`, full Git history, `upstream` remote). On such an install, `update` moves to the latest `main` through NanoClaw's own staged updater and stops for `/update-nanoclaw` when `main` carries a breaking change.
 
 Docs: [Installation](https://docs.nanoclaw.dev/installation). Support: [NanoClaw issues](https://github.com/nanocoai/nanoclaw/issues) or the [Discord](https://discord.gg/VDdww8qS42). Scripts: [`ct/nanoclaw.sh`](ct/nanoclaw.sh), [`install/nanoclaw-install.sh`](install/nanoclaw-install.sh).
 

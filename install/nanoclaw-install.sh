@@ -38,23 +38,39 @@ $STD usermod -aG docker nanoclaw
 $STD loginctl enable-linger nanoclaw
 msg_ok "Created NanoClaw Account"
 
-fetch_and_deploy_gh_release "nanoclaw" "nanocoai/nanoclaw" "tarball"
+if [[ "${var_nanoclaw_ref:-}" == "main" ]]; then
+  # Opt-in: track upstream main instead of a release. Same layout as a release
+  # install (full history, upstream remote, local main branch), so `update`
+  # and /update-nanoclaw can move it forward from upstream/main.
+  msg_info "Fetching NanoClaw main"
+  mkdir -p /opt/nanoclaw
+  cd /opt/nanoclaw || exit
+  $STD git init -q -b main
+  $STD git remote add upstream https://github.com/nanocoai/nanoclaw.git
+  $STD git fetch -q upstream "+refs/heads/main:refs/remotes/upstream/main"
+  $STD git reset -q --hard upstream/main
+  echo "main" >~/.nanoclaw-ref
+  msg_ok "Fetched NanoClaw main ($(git rev-parse --short=8 HEAD))"
+  msg_info "Preparing NanoClaw Checkout"
+else
+  fetch_and_deploy_gh_release "nanoclaw" "nanocoai/nanoclaw" "tarball"
 
-# NanoClaw identifies its code, refreshes installed channel, provider and
-# gateway payloads and runs its transactional updater through Git, so the
-# release tarball is paired with the matching tag history. `git reset` points
-# the index at the tag without touching the extracted files and
-# `git checkout -- .` restores anything the archive left out. The updater
-# commits refreshed payloads and stages new releases under
-# /opt/.nanoclaw-updates.
-msg_info "Preparing NanoClaw Checkout"
-NANOCLAW_TAG="v$(cat ~/.nanoclaw)"
-cd /opt/nanoclaw || exit
-$STD git init -q -b main
-$STD git remote add upstream https://github.com/nanocoai/nanoclaw.git
-$STD git fetch -q upstream "refs/tags/${NANOCLAW_TAG}:refs/tags/${NANOCLAW_TAG}"
-$STD git reset -q "$NANOCLAW_TAG"
-$STD git checkout -q -- .
+  # NanoClaw identifies its code, refreshes installed channel, provider and
+  # gateway payloads and runs its transactional updater through Git, so the
+  # release tarball is paired with the matching tag history. `git reset` points
+  # the index at the tag without touching the extracted files and
+  # `git checkout -- .` restores anything the archive left out. The updater
+  # commits refreshed payloads and stages new releases under
+  # /opt/.nanoclaw-updates.
+  msg_info "Preparing NanoClaw Checkout"
+  NANOCLAW_TAG="v$(cat ~/.nanoclaw)"
+  cd /opt/nanoclaw || exit
+  $STD git init -q -b main
+  $STD git remote add upstream https://github.com/nanocoai/nanoclaw.git
+  $STD git fetch -q upstream "refs/tags/${NANOCLAW_TAG}:refs/tags/${NANOCLAW_TAG}"
+  $STD git reset -q "$NANOCLAW_TAG"
+  $STD git checkout -q -- .
+fi
 $STD git config user.name "NanoClaw"
 $STD git config user.email "nanoclaw@localhost"
 install -d -o nanoclaw -g nanoclaw /opt/.nanoclaw-updates

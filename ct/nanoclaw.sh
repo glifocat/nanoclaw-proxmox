@@ -2,7 +2,7 @@
 # Published from the glifocat/nanoclaw-proxmox fork, not community-scripts.
 # Both roots are pinned so the script, its install step, the engine and the
 # container's later `update` all run the tested revision.
-COMMUNITY_SCRIPTS_URL="${COMMUNITY_SCRIPTS_URL:-https://raw.githubusercontent.com/glifocat/nanoclaw-proxmox/nanoclaw-helper-v1}"
+COMMUNITY_SCRIPTS_URL="${COMMUNITY_SCRIPTS_URL:-https://raw.githubusercontent.com/glifocat/nanoclaw-proxmox/nanoclaw-helper-v2}"
 COMMUNITY_SCRIPTS_CORE_URL="${COMMUNITY_SCRIPTS_CORE_URL:-https://raw.githubusercontent.com/community-scripts/core/6f9088594d1541019858da37b864e610c568daf2}"
 export COMMUNITY_SCRIPTS_URL COMMUNITY_SCRIPTS_CORE_URL
 _cs_boot="${COMMUNITY_SCRIPTS_CORE_DIR:-$(dirname "${BASH_SOURCE[0]}")/../../core}/core/build.func"
@@ -29,6 +29,73 @@ variables
 color
 catch_errors
 
+# var_nanoclaw_ref=main installs upstream main instead of the latest release.
+case "${var_nanoclaw_ref:-}" in
+"" | release) ;;
+main)
+  if [[ -n "${var_appversion:-}" ]]; then
+    msg_error "var_nanoclaw_ref=main and var_appversion cannot be combined."
+    exit 1
+  fi
+  export var_nanoclaw_ref
+  ;;
+*)
+  msg_error "var_nanoclaw_ref must be 'main', or unset for the latest release."
+  exit 1
+  ;;
+esac
+
+# Setup copies payloads into the tree without committing them, and the
+# transaction refuses to start from a dirty checkout.
+function nanoclaw_record_payloads() {
+  if [[ -n "$("${NANOCLAW_USER[@]}" git status --porcelain)" ]]; then
+    # The startup gate pins the upgrade marker to HEAD, so a marker that was
+    # current must follow this commit; otherwise a deferred or failed update
+    # would leave a service that refuses to restart.
+    NANOCLAW_MARKER=$("${NANOCLAW_USER[@]}" pnpm exec tsx scripts/upgrade-state.ts get 2>/dev/null | jq -r '.commit // empty' 2>/dev/null)
+    NANOCLAW_HEAD=$("${NANOCLAW_USER[@]}" git rev-parse HEAD)
+    $STD "${NANOCLAW_USER[@]}" git add --all
+    $STD "${NANOCLAW_USER[@]}" git commit -q -m "chore: record installed NanoClaw payloads"
+    if [[ -n "$NANOCLAW_MARKER" && "$NANOCLAW_MARKER" == "$NANOCLAW_HEAD" ]]; then
+      $STD "${NANOCLAW_USER[@]}" pnpm exec tsx scripts/upgrade-state.ts set "" proxmox-helper
+    fi
+  fi
+}
+
+# $1 = git ref to merge, $2 = its name in messages.
+function nanoclaw_apply_update() {
+  local ref="$1" label="$2"
+
+  msg_info "Staging NanoClaw ${label}"
+  NANOCLAW_UPDATE=$("${NANOCLAW_USER[@]}" pnpm exec tsx scripts/update-nanoclaw.ts prepare --upstream-ref "$ref" --strategy merge 2>/dev/null) || {
+    msg_error "NanoClaw could not stage ${label}; the running install is unchanged. Run /update-nanoclaw as the nanoclaw user in /opt/nanoclaw for details."
+    exit
+  }
+  NANOCLAW_UPDATE_ID=$(jq -r '.id' <<<"$NANOCLAW_UPDATE")
+  msg_ok "Staged NanoClaw ${label}"
+
+  if [[ "$(jq -r '.requirements | length' <<<"$NANOCLAW_UPDATE")" != "0" ]]; then
+    $STD "${NANOCLAW_USER[@]}" pnpm exec tsx scripts/update-nanoclaw.ts abandon --id "$NANOCLAW_UPDATE_ID"
+    msg_warn "NanoClaw ${label} has breaking changes that need manual steps; the running install is unchanged:"
+    jq -r '.requirements[] | "  - \(.description | ltrimstr("- "))"' <<<"$NANOCLAW_UPDATE"
+    msg_custom "ℹ️" "${YW}" "Finish this update with /update-nanoclaw from a coding agent, as the nanoclaw user in /opt/nanoclaw."
+    exit
+  fi
+
+  msg_info "Validating NanoClaw ${label}"
+  $STD "${NANOCLAW_USER[@]}" pnpm exec tsx scripts/update-nanoclaw.ts validate --id "$NANOCLAW_UPDATE_ID" || {
+    $STD "${NANOCLAW_USER[@]}" pnpm exec tsx scripts/update-nanoclaw.ts abandon --id "$NANOCLAW_UPDATE_ID"
+    msg_error "NanoClaw ${label} failed validation; the running install is unchanged."
+    exit
+  }
+  msg_ok "Validated NanoClaw ${label}"
+
+  msg_info "Updating NanoClaw"
+  $STD "${NANOCLAW_USER[@]}" pnpm exec tsx scripts/update-nanoclaw.ts cutover --id "$NANOCLAW_UPDATE_ID"
+  $STD "${NANOCLAW_USER[@]}" pnpm exec tsx scripts/update-nanoclaw.ts finish --id "$NANOCLAW_UPDATE_ID"
+  $STD "${NANOCLAW_USER[@]}" pnpm exec tsx scripts/update-nanoclaw.ts cleanup --id "$NANOCLAW_UPDATE_ID"
+}
+
 function update_script() {
   header_info
   check_container_storage
@@ -39,62 +106,40 @@ function update_script() {
     exit
   fi
 
-  if check_for_gh_release "nanoclaw" "nanocoai/nanoclaw"; then
-    # NanoClaw keeps installed channel, provider and gateway payloads inside
-    # its checkout and updates through its own transaction
-    # (scripts/update-nanoclaw.ts): stage and validate the release, then stop
-    # the service and agents, snapshot state, rebuild, stamp the upgrade
-    # marker and restart. Replacing the tree from a tarball would drop those
-    # payloads and trip NanoClaw's startup gate.
+  # NanoClaw keeps installed channel, provider and gateway payloads inside
+  # its checkout and updates through its own transaction
+  # (scripts/update-nanoclaw.ts): stage and validate the target, then stop
+  # the service and agents, snapshot state, rebuild, stamp the upgrade
+  # marker and restart. Replacing the tree from a tarball would drop those
+  # payloads and trip NanoClaw's startup gate.
+  NANOCLAW_USER=(runuser -u nanoclaw -- env "XDG_RUNTIME_DIR=/run/user/$(id -u nanoclaw)")
+
+  if [[ "$(cat ~/.nanoclaw-ref 2>/dev/null)" == "main" ]]; then
+    # Main installs follow upstream main through the same transaction; a
+    # [BREAKING] entry still stops the update for /update-nanoclaw.
     cd /opt/nanoclaw || exit
-    NANOCLAW_USER=(runuser -u nanoclaw -- env "XDG_RUNTIME_DIR=/run/user/$(id -u nanoclaw)")
+    ensure_dependencies jq
+    msg_info "Fetching NanoClaw main"
+    $STD "${NANOCLAW_USER[@]}" git fetch -q upstream "+refs/heads/main:refs/remotes/upstream/main"
+    NANOCLAW_TARGET=$("${NANOCLAW_USER[@]}" git rev-parse upstream/main)
+    if "${NANOCLAW_USER[@]}" git merge-base --is-ancestor "$NANOCLAW_TARGET" HEAD; then
+      msg_ok "No update available: NanoClaw main (${NANOCLAW_TARGET:0:8})"
+      exit
+    fi
+    nanoclaw_record_payloads
+    msg_ok "Fetched NanoClaw main (${NANOCLAW_TARGET:0:8})"
+
+    nanoclaw_apply_update "$NANOCLAW_TARGET" "main (${NANOCLAW_TARGET:0:8})"
+    msg_ok "Updated NanoClaw to main (${NANOCLAW_TARGET:0:8})"
+  elif check_for_gh_release "nanoclaw" "nanocoai/nanoclaw"; then
+    cd /opt/nanoclaw || exit
 
     msg_info "Fetching NanoClaw ${CHECK_UPDATE_RELEASE}"
     $STD "${NANOCLAW_USER[@]}" git fetch -q upstream "refs/tags/${CHECK_UPDATE_RELEASE}:refs/tags/${CHECK_UPDATE_RELEASE}"
-    # Setup copies payloads into the tree without committing them, and the
-    # transaction refuses to start from a dirty checkout.
-    if [[ -n "$("${NANOCLAW_USER[@]}" git status --porcelain)" ]]; then
-      # The startup gate pins the upgrade marker to HEAD, so a marker that was
-      # current must follow this commit; otherwise a deferred or failed update
-      # would leave a service that refuses to restart.
-      NANOCLAW_MARKER=$("${NANOCLAW_USER[@]}" pnpm exec tsx scripts/upgrade-state.ts get 2>/dev/null | jq -r '.commit // empty' 2>/dev/null)
-      NANOCLAW_HEAD=$("${NANOCLAW_USER[@]}" git rev-parse HEAD)
-      $STD "${NANOCLAW_USER[@]}" git add --all
-      $STD "${NANOCLAW_USER[@]}" git commit -q -m "chore: record installed NanoClaw payloads"
-      if [[ -n "$NANOCLAW_MARKER" && "$NANOCLAW_MARKER" == "$NANOCLAW_HEAD" ]]; then
-        $STD "${NANOCLAW_USER[@]}" pnpm exec tsx scripts/upgrade-state.ts set "" proxmox-helper
-      fi
-    fi
+    nanoclaw_record_payloads
     msg_ok "Fetched NanoClaw ${CHECK_UPDATE_RELEASE}"
 
-    msg_info "Staging NanoClaw ${CHECK_UPDATE_RELEASE}"
-    NANOCLAW_UPDATE=$("${NANOCLAW_USER[@]}" pnpm exec tsx scripts/update-nanoclaw.ts prepare --upstream-ref "$CHECK_UPDATE_RELEASE" --strategy merge 2>/dev/null) || {
-      msg_error "NanoClaw could not stage ${CHECK_UPDATE_RELEASE}; the running install is unchanged. Run /update-nanoclaw as the nanoclaw user in /opt/nanoclaw for details."
-      exit
-    }
-    NANOCLAW_UPDATE_ID=$(jq -r '.id' <<<"$NANOCLAW_UPDATE")
-    msg_ok "Staged NanoClaw ${CHECK_UPDATE_RELEASE}"
-
-    if [[ "$(jq -r '.requirements | length' <<<"$NANOCLAW_UPDATE")" != "0" ]]; then
-      $STD "${NANOCLAW_USER[@]}" pnpm exec tsx scripts/update-nanoclaw.ts abandon --id "$NANOCLAW_UPDATE_ID"
-      msg_warn "NanoClaw ${CHECK_UPDATE_RELEASE} has breaking changes that need manual steps; the running install is unchanged:"
-      jq -r '.requirements[] | "  - \(.description | ltrimstr("- "))"' <<<"$NANOCLAW_UPDATE"
-      msg_custom "ℹ️" "${YW}" "Finish this update with /update-nanoclaw from a coding agent, as the nanoclaw user in /opt/nanoclaw."
-      exit
-    fi
-
-    msg_info "Validating NanoClaw ${CHECK_UPDATE_RELEASE}"
-    $STD "${NANOCLAW_USER[@]}" pnpm exec tsx scripts/update-nanoclaw.ts validate --id "$NANOCLAW_UPDATE_ID" || {
-      $STD "${NANOCLAW_USER[@]}" pnpm exec tsx scripts/update-nanoclaw.ts abandon --id "$NANOCLAW_UPDATE_ID"
-      msg_error "NanoClaw ${CHECK_UPDATE_RELEASE} failed validation; the running install is unchanged."
-      exit
-    }
-    msg_ok "Validated NanoClaw ${CHECK_UPDATE_RELEASE}"
-
-    msg_info "Updating NanoClaw"
-    $STD "${NANOCLAW_USER[@]}" pnpm exec tsx scripts/update-nanoclaw.ts cutover --id "$NANOCLAW_UPDATE_ID"
-    $STD "${NANOCLAW_USER[@]}" pnpm exec tsx scripts/update-nanoclaw.ts finish --id "$NANOCLAW_UPDATE_ID"
-    $STD "${NANOCLAW_USER[@]}" pnpm exec tsx scripts/update-nanoclaw.ts cleanup --id "$NANOCLAW_UPDATE_ID"
+    nanoclaw_apply_update "$CHECK_UPDATE_RELEASE" "$CHECK_UPDATE_RELEASE"
     echo "${CHECK_UPDATE_RELEASE#v}" >~/.nanoclaw
     msg_ok "Updated NanoClaw to ${CHECK_UPDATE_RELEASE}"
   fi
@@ -113,7 +158,11 @@ build_container
 description
 
 msg_ok "Completed Successfully!\n"
-echo -e "${CREATING}${GN}${APP} is installed at /opt/nanoclaw.${CL}"
+if [[ "${var_nanoclaw_ref:-}" == "main" ]]; then
+  echo -e "${CREATING}${GN}${APP} main is installed at /opt/nanoclaw; \`update\` follows upstream main.${CL}"
+else
+  echo -e "${CREATING}${GN}${APP} is installed at /opt/nanoclaw.${CL}"
+fi
 echo -e "${INFO}${YW}NanoClaw's setup wizard completes authentication, agent setup and the service.${CL}"
 
 if [[ "$nanoclaw_setup_interactive" == true ]] && MODE='' mode='' prompt_confirm "Start NanoClaw setup now?" "n"; then
