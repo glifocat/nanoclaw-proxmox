@@ -2,7 +2,7 @@
 # Published from the glifocat/nanoclaw-proxmox fork, not community-scripts.
 # Both roots are pinned so the script, its install step, the engine and the
 # container's later `update` all run the tested revision.
-COMMUNITY_SCRIPTS_URL="${COMMUNITY_SCRIPTS_URL:-https://raw.githubusercontent.com/glifocat/nanoclaw-proxmox/nanoclaw-helper-v2.1}"
+COMMUNITY_SCRIPTS_URL="${COMMUNITY_SCRIPTS_URL:-https://raw.githubusercontent.com/glifocat/nanoclaw-proxmox/nanoclaw-helper-v2.2}"
 COMMUNITY_SCRIPTS_CORE_URL="${COMMUNITY_SCRIPTS_CORE_URL:-https://raw.githubusercontent.com/community-scripts/core/6f9088594d1541019858da37b864e610c568daf2}"
 export COMMUNITY_SCRIPTS_URL COMMUNITY_SCRIPTS_CORE_URL
 _cs_boot="${COMMUNITY_SCRIPTS_CORE_DIR:-$(dirname "${BASH_SOURCE[0]}")/../../core}/core/build.func"
@@ -74,7 +74,7 @@ function nanoclaw_apply_update() {
 
   msg_info "Staging NanoClaw ${label}"
   NANOCLAW_UPDATE=$("${NANOCLAW_USER[@]}" pnpm exec tsx scripts/update-nanoclaw.ts prepare --upstream-ref "$ref" --strategy merge 2>/dev/null) || {
-    msg_error "NanoClaw could not stage ${label}; the running install is unchanged. Run /update-nanoclaw as the nanoclaw user in /opt/nanoclaw for details."
+    msg_error "NanoClaw could not stage ${label}; the running install is unchanged. Run /update-nanoclaw as the nanoclaw user in ${NANOCLAW_DIR} for details."
     exit
   }
   NANOCLAW_UPDATE_ID=$(jq -r '.id' <<<"$NANOCLAW_UPDATE")
@@ -84,7 +84,7 @@ function nanoclaw_apply_update() {
     $STD "${NANOCLAW_USER[@]}" pnpm exec tsx scripts/update-nanoclaw.ts abandon --id "$NANOCLAW_UPDATE_ID"
     msg_warn "NanoClaw ${label} has breaking changes that need manual steps; the running install is unchanged:"
     jq -r '.requirements[] | "  - \(.description | ltrimstr("- "))"' <<<"$NANOCLAW_UPDATE"
-    msg_custom "ℹ️" "${YW}" "Finish this update with /update-nanoclaw from a coding agent, as the nanoclaw user in /opt/nanoclaw."
+    msg_custom "ℹ️" "${YW}" "Finish this update with /update-nanoclaw from a coding agent, as the nanoclaw user in ${NANOCLAW_DIR}."
     exit
   fi
 
@@ -107,7 +107,11 @@ function update_script() {
   check_container_storage
   check_container_resources
 
-  if [[ ! -d /opt/nanoclaw ]]; then
+  # Installs live in the nanoclaw account's home; containers from helper
+  # v2.1 and earlier keep /opt/nanoclaw.
+  NANOCLAW_DIR=/home/nanoclaw/nanoclaw
+  [[ -d "$NANOCLAW_DIR" ]] || NANOCLAW_DIR=/opt/nanoclaw
+  if [[ ! -d "$NANOCLAW_DIR" ]]; then
     msg_error "No ${APP} Installation Found!"
     exit
   fi
@@ -123,22 +127,22 @@ function update_script() {
   if [[ "$(cat ~/.nanoclaw-ref 2>/dev/null)" == "main" ]]; then
     # Main installs follow upstream main through the same transaction; a
     # [BREAKING] entry still stops the update for /update-nanoclaw.
-    cd /opt/nanoclaw || exit
+    cd "$NANOCLAW_DIR" || exit
     ensure_dependencies jq
     # Cutover moves HEAD before it records its phase, so an interrupted update
     # can look current to the ancestry check below. Any unfinished transaction
     # for this checkout stops here; files are read one by one so a bad one
     # cannot hide the rest.
     NANOCLAW_PENDING=""
-    for NANOCLAW_STATE in /opt/.nanoclaw-updates/*/*/state.json; do
+    for NANOCLAW_STATE in "${NANOCLAW_DIR%/*}"/.nanoclaw-updates/*/*/state.json; do
       [[ -f "$NANOCLAW_STATE" ]] || continue
-      NANOCLAW_PENDING=$(jq -r 'select(.projectRoot == "/opt/nanoclaw" and (.phase | IN("complete", "rolled-back", "abandoned") | not)) | "\(.id) (\(.phase))"' "$NANOCLAW_STATE" 2>/dev/null || true)
+      NANOCLAW_PENDING=$(jq -r --arg root "$NANOCLAW_DIR" 'select(.projectRoot == $root and (.phase | IN("complete", "rolled-back", "abandoned") | not)) | "\(.id) (\(.phase))"' "$NANOCLAW_STATE" 2>/dev/null || true)
       if [[ -n "$NANOCLAW_PENDING" ]]; then
         break
       fi
     done
     if [[ -n "$NANOCLAW_PENDING" ]]; then
-      msg_error "NanoClaw update ${NANOCLAW_PENDING} did not finish. Finish, roll back or abandon it with /update-nanoclaw as the nanoclaw user in /opt/nanoclaw, then run update again."
+      msg_error "NanoClaw update ${NANOCLAW_PENDING} did not finish. Finish, roll back or abandon it with /update-nanoclaw as the nanoclaw user in ${NANOCLAW_DIR}, then run update again."
       exit
     fi
     msg_info "Fetching NanoClaw main"
@@ -154,7 +158,7 @@ function update_script() {
     nanoclaw_apply_update "$NANOCLAW_TARGET" "main (${NANOCLAW_TARGET:0:8})"
     msg_ok "Updated NanoClaw to main (${NANOCLAW_TARGET:0:8})"
   elif check_for_gh_release "nanoclaw" "nanocoai/nanoclaw"; then
-    cd /opt/nanoclaw || exit
+    cd "$NANOCLAW_DIR" || exit
 
     msg_info "Fetching NanoClaw ${CHECK_UPDATE_RELEASE}"
     $STD "${NANOCLAW_USER[@]}" git fetch -q upstream "refs/tags/${CHECK_UPDATE_RELEASE}:refs/tags/${CHECK_UPDATE_RELEASE}"
@@ -181,17 +185,17 @@ description
 
 msg_ok "Completed Successfully!\n"
 if [[ "${var_nanoclaw_ref:-}" == "main" ]]; then
-  echo -e "${CREATING}${GN}${APP} main is installed at /opt/nanoclaw; \`update\` follows upstream main.${CL}"
+  echo -e "${CREATING}${GN}${APP} main is installed at /home/nanoclaw/nanoclaw; \`update\` follows upstream main.${CL}"
 else
-  echo -e "${CREATING}${GN}${APP} is installed at /opt/nanoclaw.${CL}"
+  echo -e "${CREATING}${GN}${APP} is installed at /home/nanoclaw/nanoclaw.${CL}"
 fi
 echo -e "${INFO}${YW}NanoClaw's setup wizard completes authentication, agent setup and the service.${CL}"
 
 if [[ "$nanoclaw_setup_interactive" == true ]] && MODE='' mode='' prompt_confirm "Start NanoClaw setup now?" "n"; then
-  if ! pct exec "$CT_ID" --keep-env 0 -- machinectl shell nanoclaw@ /usr/bin/bash -lc 'cd /opt/nanoclaw && exec bash nanoclaw.sh'; then
+  if ! pct exec "$CT_ID" --keep-env 0 -- machinectl shell nanoclaw@ /usr/bin/bash -lc 'cd /home/nanoclaw/nanoclaw && exec bash nanoclaw.sh'; then
     msg_warn "NanoClaw setup exited with an error. Resume it with the command below."
   fi
 fi
 
 echo -e "${INFO}${YW}To open NanoClaw setup from the Proxmox host:${CL}"
-echo -e "${TAB}${GATEWAY}${BGN}pct exec ${CT_ID} --keep-env 0 -- machinectl shell nanoclaw@ /usr/bin/bash -lc 'cd /opt/nanoclaw && exec bash nanoclaw.sh'${CL}"
+echo -e "${TAB}${GATEWAY}${BGN}pct exec ${CT_ID} --keep-env 0 -- machinectl shell nanoclaw@ /usr/bin/bash -lc 'cd /home/nanoclaw/nanoclaw && exec bash nanoclaw.sh'${CL}"

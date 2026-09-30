@@ -43,8 +43,8 @@ if [[ "${var_nanoclaw_ref:-}" == "main" ]]; then
   # install (full history, upstream remote, local main branch), so `update`
   # and /update-nanoclaw can move it forward from upstream/main.
   msg_info "Fetching NanoClaw main"
-  mkdir -p /opt/nanoclaw
-  cd /opt/nanoclaw || exit
+  mkdir -p /home/nanoclaw/nanoclaw
+  cd /home/nanoclaw/nanoclaw || exit
   $STD git init -q -b main
   $STD git remote add upstream https://github.com/nanocoai/nanoclaw.git
   $STD git fetch -q upstream "+refs/heads/main:refs/remotes/upstream/main"
@@ -53,18 +53,18 @@ if [[ "${var_nanoclaw_ref:-}" == "main" ]]; then
   msg_ok "Fetched NanoClaw main ($(git rev-parse --short=8 HEAD))"
   msg_info "Preparing NanoClaw Checkout"
 else
-  fetch_and_deploy_gh_release "nanoclaw" "nanocoai/nanoclaw" "tarball"
+  fetch_and_deploy_gh_release "nanoclaw" "nanocoai/nanoclaw" "tarball" "latest" "/home/nanoclaw/nanoclaw"
 
   # NanoClaw identifies its code, refreshes installed channel, provider and
   # gateway payloads and runs its transactional updater through Git, so the
   # release tarball is paired with the matching tag history. `git reset` points
   # the index at the tag without touching the extracted files and
   # `git checkout -- .` restores anything the archive left out. The updater
-  # commits refreshed payloads and stages new releases under
-  # /opt/.nanoclaw-updates.
+  # commits refreshed payloads and stages new releases in
+  # /home/nanoclaw/.nanoclaw-updates, next to the checkout.
   msg_info "Preparing NanoClaw Checkout"
   NANOCLAW_TAG="v$(cat ~/.nanoclaw)"
-  cd /opt/nanoclaw || exit
+  cd /home/nanoclaw/nanoclaw || exit
   $STD git init -q -b main
   $STD git remote add upstream https://github.com/nanocoai/nanoclaw.git
   $STD git fetch -q upstream "refs/tags/${NANOCLAW_TAG}:refs/tags/${NANOCLAW_TAG}"
@@ -73,8 +73,7 @@ else
 fi
 $STD git config user.name "NanoClaw"
 $STD git config user.email "nanoclaw@localhost"
-install -d -o nanoclaw -g nanoclaw /opt/.nanoclaw-updates
-chown -R nanoclaw:nanoclaw /opt/nanoclaw
+chown -R nanoclaw:nanoclaw /home/nanoclaw/nanoclaw
 msg_ok "Prepared NanoClaw Checkout"
 
 msg_info "Installing Node Dependencies"

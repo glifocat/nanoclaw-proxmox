@@ -11,12 +11,12 @@
   "website": "https://nanoclaw.dev/",
   "repository": "https://github.com/nanocoai/nanoclaw",
   "logo": "https://cdn.jsdelivr.net/gh/selfhst/icons@main/webp/nanoclaw.webp",
-  "description": "NanoClaw is a self-hosted AI assistant that runs each agent in an isolated container and connects it to WhatsApp, Telegram, Slack, Discord, Matrix, Gmail, Mattermost and a local CLI. This script installs the latest NanoClaw release natively with Node.js and Docker in an unprivileged Debian LXC and hands over to NanoClaw's own setup wizard.",
+  "description": "NanoClaw is a self-hosted AI assistant that runs each agent in an isolated container and connects it to WhatsApp, Telegram, Slack, Discord, Matrix, Gmail, Mattermost and a local CLI. This script installs the latest NanoClaw release natively with Node.js and Docker in the home folder of a dedicated account in an unprivileged Debian LXC and hands over to NanoClaw's own setup wizard.",
   "install_methods": [
     {
       "type": "default",
       "script": "ct/nanoclaw.sh",
-      "config_path": "/opt/nanoclaw/.env",
+      "config_path": "/home/nanoclaw/nanoclaw/.env",
       "resources": {
         "cpu": 2,
         "ram": 8192,
@@ -36,11 +36,11 @@
       "type": "info"
     },
     {
-      "text": "There is no web interface. NanoClaw is configured through its setup wizard and the ncl CLI in /opt/nanoclaw; the wizard registers provider credentials, builds the agent image and installs a systemd user service for the nanoclaw account.",
+      "text": "There is no web interface. NanoClaw is configured through its setup wizard and the ncl CLI in /home/nanoclaw/nanoclaw; the wizard registers provider credentials, builds the agent image and installs a systemd user service for the nanoclaw account.",
       "type": "info"
     },
     {
-      "text": "The update function stages and validates a new release through NanoClaw's own transactional updater before it stops the service, rebuilds and restarts. A release with breaking changes that need manual migration steps is left untouched; finish it with /update-nanoclaw from a coding agent in /opt/nanoclaw.",
+      "text": "The update function stages and validates a new release through NanoClaw's own transactional updater before it stops the service, rebuilds and restarts. A release with breaking changes that need manual migration steps is left untouched; finish it with /update-nanoclaw from a coding agent in /home/nanoclaw/nanoclaw.",
       "type": "warning"
     },
     {
@@ -48,7 +48,7 @@
       "type": "info"
     },
     {
-      "text": "The nanoclaw account owns /opt/nanoclaw and belongs to the docker group, which is root-equivalent inside the LXC. It has no password; reach it with 'pct enter <CTID>' and 'machinectl shell nanoclaw@'.",
+      "text": "The nanoclaw account owns /home/nanoclaw/nanoclaw and belongs to the docker group, which is root-equivalent inside the LXC. It has no password; reach it with 'pct enter <CTID>' and 'machinectl shell nanoclaw@'.",
       "type": "warning"
     }
   ]
